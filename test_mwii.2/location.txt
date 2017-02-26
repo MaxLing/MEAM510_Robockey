@@ -1,0 +1,179 @@
+/*
+ * Location.c
+ *
+ * Created: 11/9/2016 9:58:19 PM
+ *  Author: wudao
+ */ 
+
+#include "location.h"
+#include "states.h"
+#include "m_bus.h"
+#include "m_general.h"
+#include "m_wii.h"
+#include <math.h>
+#include <stdlib.h>
+
+ #define pi 3.14159
+ #define filter 0 // adjust maybe
+ #define offset_x 505
+ #define offset_y 390
+ 
+ static float position[2] = {0,0};
+ static float orientation = 0;
+ //static float scale = 0; // use scale or max/min ration for 3 star calculation
+ static float location[3];
+ static char init = 0;
+ static int stars = 0; // static???
+ 
+ void location_init()
+ {
+ if (m_wii_open()){init =1;}
+ else {}//error
+ }
+
+ void location_update(unsigned int* data)
+ {
+ if (!init){location_init();}
+ // if (m_wii_read(data)) 
+ //{
+ location_calculate(data);
+ setPosition(location);
+  //}
+ //else {}//error
+ }
+ 
+ void countstar(unsigned int* data) // counting visible stars
+ {
+ static int lost[4] = {0,0,0,0};
+ int i = 0;
+ for (i=0;i<4;i++){
+     if(data[i*3] ==1023 && data[i*3+1] ==1023)
+	      {lost[i]=1;}
+	 else {lost[i]=0;}
+ stars = 4 - (lost[0]+lost[1]+lost[2]+lost[3]);
+ }
+ }
+
+void location_calculate(unsigned int* data)
+{
+countstar(data);
+switch(stars) 
+{
+	case 4:
+	calculate4(data);
+	break;
+
+	case 3:
+	calculate3(data);
+	break;
+	
+	case 2:
+	drop();
+	break;
+	
+	case 1:
+	drop();
+	break;
+	
+	case 0:
+	drop();
+	break;
+	
+	default: 
+	drop(); // caution
+}
+
+}
+
+void calculate4(unsigned int* data)
+{
+    float dmax = 0;
+    float d[4][4];
+    int i = 0;
+    int j = 0;
+    int major_points[2];
+    int rest_points[2];
+    static int northstar;
+    static int southstar;
+
+	// find north and south stars
+    for (i=0;i<4;i++){
+	    for (j=0;j<4;j++){
+		    float delta_x = abs((float)data[i*3] - (float)data[j*3]);
+		    float delta_y = abs((float)data[i*3 + 1] - (float)data[j*3 + 1]);
+		    d[i][j] = sqrtf(powf(delta_x, 2) + powf(delta_y, 2));
+		    if (d[i][j] > dmax){
+			    major_points[0] = i;
+			    major_points[1] = j;
+				dmax = d[i][j];
+		    }
+	    }
+    }
+
+
+	// find rest 2 stars
+    i = 0;
+	  for (j=0;j<4;j++){
+		 if (major_points[0] != j && major_points[1] != j)
+		 {  rest_points[i] = j;
+		    i++;}
+	  }
+
+	// differ north and south stars 
+    float dsum[2];
+    dsum[0] = d[major_points[0]][rest_points[0]] + d[major_points[0]][rest_points[1]];
+    dsum[1] = d[major_points[1]][rest_points[0]] + d[major_points[1]][rest_points[1]];
+    if (dsum[0] < dsum[1]){
+	    northstar = major_points[0];
+        southstar = major_points[1];}
+    else{northstar = major_points[1];
+        southstar = major_points[0];}
+
+    // scale
+    // scale = 29/d[northstar][southstar];
+
+    // orientation
+    float angle = atan2f(((float)data[3*northstar]-(float)data[3*southstar]), ((float)data[3*northstar+1]-(float)data[3*southstar+1])); 
+	//float angle = atan2f(((float)data[3*southstar+1]-(float)data[3*northstar+1]),((float)data[3*northstar]-(float)data[3*southstar]));
+
+    // position
+    float center[2];
+    center[0] = -((float)(data[(northstar) * 3] + data[(southstar) * 3])/2 - offset_x);
+    center[1] = -((float)(data[(northstar) * 3 + 1] + data[(southstar) * 3 + 1])/2 - offset_y);
+	
+	//float northx = -(cosf(angle)*(data[(northstar) *3]-512)-sinf(angle)*(data[(northstar) * 3 + 1]-384));
+	//float southx = -(cosf(angle)*(data[(southstar) *3]-512)-sinf(angle)*(data[(southstar) * 3 + 1]-384));
+	//float northy = -(sinf(angle)*(data[(northstar) *3]-512)+cosf(angle)*(data[(northstar) * 3 + 1]-384);
+	//float southy = -(sinf(angle)*(data[(southstar) *3]-512)+cosf(angle)*(data[(southstar) * 3 + 1]-384);
+	
+	float robot[2];
+	
+	//robot[0] =  (northx + southx)/2;
+	//robot[1] =  (northy + southy)/2;
+    robot[0] = cosf(angle) * center[0] - sinf(angle) * center[1]; //
+    robot[1] = sinf(angle) * center[0] + cosf(angle) * center[1];
+
+    //add filters
+    orientation = orientation * (filter) + (angle) * (1 - filter);
+    position[0] = position[0] * (filter) + (robot[0]) * (1 - filter);
+	position[1] = position[1] * (filter) + (robot[1]) * (1 - filter);
+
+    //return location
+    location[0] = position[0]; //x
+    location[1] = position[1]; //y
+    location[2] = orientation;
+    //location[3] = scale;
+}
+
+void calculate3(unsigned int* data)
+{
+    drop(); // change later
+}
+
+void drop()
+{
+    // how to drop???
+	 location[0] = position[0];
+	 location[1] = position[1];
+	 location[2] = orientation;
+}
